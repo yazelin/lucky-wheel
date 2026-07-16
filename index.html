@@ -315,28 +315,36 @@ function confetti() {
 }
 
 // FB 留言清洗
-const NOISE = /^(讚|回覆|分享|編輯|作者|置頂|追蹤|檢舉|翻譯年糕|查看更多|隱藏|封鎖|最相關|最新|全部|已編輯|傳送|貼圖|表情符號|Like|Reply|Share|Author|Top fan|頭號粉絲|鐵粉|發燒友|・|·)$/i;
-const TIMEPAT = /^(\d+\s*(秒|分鐘|分|小時|時|天|日|週|周|個月|月|年)前?|\d+\s*[smhdwy]|昨天|剛剛)\s*(・.*)?$/i;
+// 真實複製格式(2026-07 實測):每則留言 =
+//   名字 → 內容(1~N 行) → 時間(如「2小時」) → 回覆 → [發送訊息] → 分享 → [已編輯]
+// 錨點是「分享」= 一則結束,下一個非雜訊行就是下一個人的名字。
+const NOISE = /^(讚|回覆|分享|發送訊息|編輯|作者|置頂|追蹤|檢舉|翻譯年糕|查看更多|查看翻譯|隱藏|封鎖|已編輯|傳送|貼圖|表情符號|GIF|未提供相片說明。?|Like|Reply|Share|Author|Top fan|頭號粉絲|鐵粉|發燒友|[・·.]+)$/i;
+const HEADER = /^(留言|最相關|最新|全部留言?|所有留言)$/;
+const TIMEPAT = /^(\d+\s*(秒|分鐘|分|小時|時|天|日|週|周|個月|月|年)前?|\d+\s*[smhdwy]|昨天.*|剛剛)\s*(・.*)?$/i;
 function isNoise(line) {
   return NOISE.test(line) || TIMEPAT.test(line) || /^\d+$/.test(line)
-    || /^\d+\s*則(回覆|留言)/.test(line) || /^https?:\/\//i.test(line);
+    || /^(查看)?(全部)?\s*\d+\s*則(回覆|留言)/.test(line) || /^https?:\/\//i.test(line);
 }
 function cleanFb(raw) {
   const lines = raw.split('\n').map((s) => s.trim()).filter(Boolean);
-  // 主模式:FB 複製時名字幾乎都連續出現兩次(頭像連結+名字連結),
-  // 「連續重複的短行」是名字的強訊號,其餘行(留言內容/雜訊)全部略過。
-  const pairs = [];
-  for (let i = 0; i + 1 < lines.length; i++) {
-    if (lines[i] === lines[i + 1] && lines[i].length <= 30 && !isNoise(lines[i])) {
-      pairs.push(lines[i]);
-      i++;
+  // 有「回覆/分享」動作行 → 是 FB 留言串,走結構解析
+  const structural = lines.filter((l) => /^(回覆|分享)$/.test(l)).length >= 2;
+  if (structural) {
+    const names = [];
+    let expectName = true; // 開頭與每則「分享」之後,下一個非雜訊行是名字
+    for (const line of lines) {
+      if (HEADER.test(line)) { expectName = true; continue; }
+      if (line === '分享') { expectName = true; continue; }
+      if (isNoise(line)) continue; // 徽章/時間/動作行:跳過但不消耗名字狀態
+      if (expectName && line.length <= 30) { names.push(line); expectName = false; }
+      // 其餘 = 留言內容,略過
     }
+    return [...new Set(names)];
   }
-  if (pairs.length >= 2) return [...new Set(pairs)];
-  // 後備模式:沒有重複訊號時,退回雜訊過濾(適合貼較乾淨的名單)
+  // 後備模式:貼的是較乾淨的名單,只做雜訊過濾
   const out = [];
   for (const line of lines) {
-    if (isNoise(line)) continue;
+    if (isNoise(line) || HEADER.test(line)) continue;
     if (line.length > 25) continue;
     if (out[out.length - 1] === line) continue;
     out.push(line);
